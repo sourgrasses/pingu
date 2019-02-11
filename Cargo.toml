@@ -1,5 +1,5 @@
 [package]
-name = "pingu"
+name = "pinguin"
 version = "0.1.0"
 authors = ["Jenn Wheeler <jwheeler@antiochcollege.edu>"]
 edition = "2018"
@@ -8,6 +8,10 @@ edition = "2018"
 byteorder = "1.3.1"
 crossbeam = "0.7.1"
 clap = "2.32.0"
-failure = "0.1.5"
+futures-preview = "0.3.0-alpha.12"
+futures-util-preview = "0.3.0-alpha.12"
+iovec = "0.1.2"
 pnet = "0.21.0"
 pnet_macros_support = "0.21.0"
+rand = "0.6.5"
+romio = "0.3.0-alpha.1"

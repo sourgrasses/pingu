@@ -1,24 +1,23 @@
 use byteorder::{BigEndian, ByteOrder};
 
 use pnet::packet::icmp::IcmpPacket;
-use pnet::packet::util::checksum;
+//use pnet::packet::util::checksum;
 use pnet_macros_support::packet::Packet;
 
 use std::convert::From;
 use std::fmt;
 use std::io::Write;
 use std::ptr;
-use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct TunnelPacket {
-    pub id: u16,
-    pub seq: u16,
-    pub raw_pack: [u8; 64],
+pub(crate) struct TunnelPacket {
+    pub(crate) id: u16,
+    pub(crate) seq: u16,
+    pub(crate) raw_pack: [u8; 64],
 }
 
 impl TunnelPacket {
-    pub fn new(id: u16, seq: u16, payload: [u8; 56]) -> TunnelPacket {
+    pub(crate) fn new(id: u16, seq: u16, payload: [u8; 56]) -> TunnelPacket {
         let mut pack: [u8; 64] = [0; 64];
 
         BigEndian::write_u16(&mut pack[4..6], id);
@@ -86,14 +85,14 @@ impl ::pnet_macros_support::packet::Packet for TunnelPacket {
 
     #[inline]
     fn payload<'p>(&'p self) -> &'p [u8] {
-        &self.raw_pack[4..]
+        &self.raw_pack[8..]
     }
 }
 
 // turn a vec of bytes into a vec of 56-byte `TunnelPacket`s
 // right now this requires a copy from the vec of data into arrays of
 // a specific size
-pub fn encode_packs(id: u16, payload: Vec<u8>) -> Arc<Vec<TunnelPacket>> {
+pub(crate) fn encode_packs(id: u16, payload: Vec<u8>) -> Vec<TunnelPacket> {
     // we'll need to subtract 8 bytes for the packet header from the standard
     // 64-byte echo packet size, leaving 56 bytes for the payload
     let chunk_size: usize = 56;
@@ -119,10 +118,10 @@ pub fn encode_packs(id: u16, payload: Vec<u8>) -> Arc<Vec<TunnelPacket>> {
         seq += 1;
     }
 
-    Arc::new(packs)
+    packs
 }
 
-pub fn decode_packs(packs: [u8; 336]) -> Vec<TunnelPacket> {
+pub(crate) fn decode_packs(packs: [u8; 336]) -> Vec<TunnelPacket> {
     let chunk_size: usize = 84;
 
     let mut chunk_buf = [0u8; 56];
