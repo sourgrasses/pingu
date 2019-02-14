@@ -1,5 +1,5 @@
 #![feature(async_await, await_macro, futures_api)]
-#![allow(dead_code, unreachable_code)]
+#![allow(dead_code, unused_imports)]
 
 mod client;
 mod error;

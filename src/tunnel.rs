@@ -1,13 +1,17 @@
 use crate::error::{Error, Result};
 use crate::packet::TunnelPacket;
 
+use futures::{executor::LocalPool, poll};
+use futures::channel::{mpsc, oneshot};
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::prelude::*;
+use futures::task::{Poll, Spawn, SpawnExt};
 use pnet::packet::ip::IpNextHeaderProtocol;
 use pnet::transport::{transport_channel, TransportChannelType, TransportProtocol, icmp_packet_iter};
 use pnet_macros_support::packet::Packet;
 
 use std::net::IpAddr;
-//use std::str;
-use std::sync::{Arc, mpsc, mpsc::Receiver, mpsc::Sender};
+use std::sync::Arc;
 use std::thread;
 
 enum TunnelType {
@@ -39,51 +43,90 @@ impl Tunnel {
     }
 
     // TODO: probably wanna implement timeout api stuff and all that
-    pub(crate) fn run(self, tx: Sender<Arc<TunnelPacket>>, rx: Receiver<Arc<TunnelPacket>>) -> Result<()> {
-        let (addr_tx, addr_rx) = mpsc::channel::<IpAddr>();
-
+    pub(crate) fn run(self, mut tx: UnboundedSender<Arc<TunnelPacket>>,
+                      mut rx: UnboundedReceiver<Arc<TunnelPacket>>,
+                      addr_rx: Option<oneshot::Receiver<IpAddr>>) -> Result<()> {
         let chan_type = TransportChannelType::Layer4(TransportProtocol::Ipv4(IpNextHeaderProtocol(1)));
         let (mut sender, mut server) = transport_channel(84, chan_type).map_err(Error::StdIo)?;
 
         match &self.tunnel_type {
             TunnelType::Client => {
-                let out_thread = thread::spawn(move || {
-                    loop {
-                        let pack = rx.recv().unwrap();
-                        //println!("rx loop: {}", str::from_utf8(pack.payload()).unwrap());
-                        sender.send_to(Arc::try_unwrap(pack).unwrap(), self.remote_addr).unwrap();
-                    }
+                let out_thread = thread::Builder::new().name("c_out_thread".to_owned());
+                let _out_handler = out_thread.spawn(move || {
+                    let mut pool = LocalPool::new();
+                    let mut spawner = pool.spawner();
+                    spawner.spawn(async move {
+                        loop {
+                            match await!(rx.next()) {
+                                Some(pack) => {
+                                    //println!("rx loop: {}", str::from_utf8(pack.payload()).unwrap());
+                                    sender.send_to(Arc::try_unwrap(pack).unwrap(), self.remote_addr).unwrap();
+                                },
+                                None => (),
+                            };
+                        }
+                    }).unwrap();
+
+                    pool.run();
                 });
 
-                let in_thread = thread::spawn(move || {
-                    let mut siter = icmp_packet_iter(&mut server);
-                    loop {
-                        let (pack, _addr) = siter.next().unwrap();
-                        let decoded: TunnelPacket = pack.into();
-                        tx.send(Arc::new(decoded)).unwrap();
-                    }
+                let in_thread = thread::Builder::new().name("c_in_thread".to_owned());
+                let _in_handler = in_thread.spawn(move || {
+                    let mut pool = LocalPool::new();
+                    let mut spawner = pool.spawner();
+                    spawner.spawn(async move {
+                        let mut siter = icmp_packet_iter(&mut server);
+                        loop {
+                            let (pack, _addr) = siter.next().unwrap();
+                            let decoded: TunnelPacket = pack.into();
+                            //println!("{}", std::str::from_utf8(decoded.payload()).unwrap());
+                            await!(tx.send(Arc::new(decoded))).unwrap();
+                        }
+                    }).unwrap();
+
+                    pool.run();
                 });
 
                 //in_thread.join().map_err(Error::Thread)?;
                 //out_thread.join().map_err(Error::Thread)?;
             },
             TunnelType::Server => {
-                let in_thread = thread::spawn(move || {
-                    let mut siter = icmp_packet_iter(&mut server);
-                    loop {
-                        let (pack, addr) = siter.next().unwrap();
-                        addr_tx.send(addr).unwrap();
-                        let decoded: TunnelPacket = pack.into();
-                        tx.send(Arc::new(decoded)).unwrap();
-                    }
+                let in_thread = thread::Builder::new().name("s_in_thread".to_owned());
+                let _in_handler = in_thread.spawn(move || {
+                    let mut pool = LocalPool::new();
+                    let mut spawner = pool.spawner();
+                    spawner.spawn(async move {
+                        let mut siter = icmp_packet_iter(&mut server);
+                        loop {
+                            let (pack, _addr) = siter.next().unwrap();
+                            let decoded: TunnelPacket = pack.into();
+                            await!(tx.send(Arc::new(decoded))).unwrap();
+                        }
+                    }).unwrap();
+
+                    pool.run();
                 });
 
-                let out_thread = thread::spawn(move || {
-                    loop {
-                        let addr = addr_rx.recv().unwrap();
-                        let pack = rx.recv().unwrap();
-                        sender.send_to(Arc::try_unwrap(pack).unwrap(), addr).unwrap();
-                    }
+                let out_thread = thread::Builder::new().name("s_out_thread".to_owned());
+                let _out_handler = out_thread.spawn(move || {
+                    let mut pool = LocalPool::new();
+                    let mut spawner = pool.spawner();
+                    spawner.spawn(async move {
+                        let addr_rx = addr_rx.ok_or(Error::Other("Failed to retrieve connection address")).unwrap();
+                        let addr = await!(addr_rx.map(|a| a.unwrap()));
+                        loop {
+                            match poll!(rx.next()) {
+                                Poll::Ready(Some(pack)) => {
+                                    //println!("{}", std::str::from_utf8(pack.payload()).unwrap());
+                                    let _ = sender.send_to(Arc::try_unwrap(pack).unwrap(), addr).unwrap();
+                                    ()
+                                },
+                                _ => (),
+                            };
+                        }
+                    }).unwrap();
+
+                    pool.run();
                 });
 
                 //in_thread.join().map_err(Error::Thread)?;
