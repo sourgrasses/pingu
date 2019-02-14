@@ -7,7 +7,7 @@ Obviously this has to be run as root, so probably you shouldn't, you know, actua
 
 ## Usage
 ```
-[user@both]$ cargo install icmptunnel
-[user@proxy]$ sudo icmptunnel -s -r 80 -a remotesiteip
-[user@client]$ sudo icmptunnel -c -l 8080 -a proxyip
+[user@both]$ cargo install pinguin
+[user@proxy]$ sudo pinguin -s -p 80 remotesiteip
+[user@client]$ sudo pinguin -c -p 8080 proxyip
 ```
